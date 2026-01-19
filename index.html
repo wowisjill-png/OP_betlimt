@@ -41,6 +41,20 @@ const GAMES = ['Baccarat', 'Dragon Tiger', 'Roulette', 'ThaiHiLo', 'ThaiFishPraw
 const WEBSITES = ['Home', 'MexA', 'MexB', 'MexC', 'MexD', 'LiveCasino A', 'LiveCasino B'];
 const CURRENCIES = ['SGD', 'MYR', 'HKD', 'CNY', 'JPY', 'AUD', 'IDR', 'USD', 'KRW'];
 
+// 幣別顯示格式：Currency ID. Currency Name
+const CURRENCY_DISPLAY = {
+  SGD: '0. SGD',
+  MYR: '1. MYR',
+  HKD: '2. HKD',
+  CNY: '3. CNY',
+  JPY: '4. JPY',
+  AUD: '5. AUD',
+  IDR: '6. IDR',
+  USD: '7. USD',
+  KRW: '8. KRW',
+  TWD: '10. TWD',
+};
+
 // Helper to generate random multiple of 5 between 1 and 50
 const getRandomMinChip = () => {
   const min = 1;
@@ -50,10 +64,18 @@ const getRandomMinChip = () => {
 };
 
 // Mock server data: Currency Minimum Chip Defaults
-const MIN_CHIP_DEFAULTS = CURRENCIES.reduce((acc, curr) => {
-    acc[curr] = getRandomMinChip();
-    return acc;
-}, {});
+const MIN_CHIP_DEFAULTS = {
+  SGD: 10,
+  MYR: 10,
+  HKD: 20,
+  CNY: 20,
+  JPY: 500,
+  AUD: 5,
+  IDR: 1000,
+  USD: 5,
+  KRW: 5000,
+  TWD: 100
+};
 
 // Minimum Limit Calculation Ratios
 const MIN_RATIOS = {
@@ -84,7 +106,7 @@ const MAX_RATIOS = {
 // Game-specific limit fields
 const GAME_LIMIT_FIELDS = {
   'Baccarat': {
-    fields: ['bp', 'tie', 'pair', 'bonus', 'bigSmall', 'anyPair', 'perfectPair', 'superSix', 'lucky6', 'bpNature', 'smallDragon', 'bigDragon', 'smallTiger', 'bigTiger', 'dragonTiger'],
+    fields: ['bp', 'tie', 'pair', 'bonus', 'bigSmall', 'anyPair', 'perfectPair', 'lucky6', 'bpNature', 'smallBigTiger', 'smallBigDragon', 'dragonTiger'],
     config: {
       bp: { displayName: 'Banker/Player', isMain: true },
       tie: { displayName: 'Tie' },
@@ -93,13 +115,10 @@ const GAME_LIMIT_FIELDS = {
       bigSmall: { displayName: 'Big/Small' },
       anyPair: { displayName: 'Any Pair' },
       perfectPair: { displayName: 'Perfect Pair' },
-      superSix: { displayName: 'Super Six' },
       lucky6: { displayName: 'Lucky 6' },
       bpNature: { displayName: 'B/P Nature' },
-      smallDragon: { displayName: 'Small Dragon' },
-      bigDragon: { displayName: 'Big Dragon' },
-      smallTiger: { displayName: 'Small Tiger' },
-      bigTiger: { displayName: 'Big Tiger' },
+      smallBigTiger: { displayName: 'Small/Big Tiger' },
+      smallBigDragon: { displayName: 'Small/Big Dragon' },
       dragonTiger: { displayName: 'Dragon Tiger' }
     }
   },
@@ -360,6 +379,8 @@ const LimitInputGroup = ({ title, minVal, maxVal, onMinChange, onMaxChange, isMa
   
   // Calculate the expected base min for this bet type based on ratio
   const calculatedBaseMin = baseMinLimit && baseMinLimit !== '' ? Math.floor(Number(baseMinLimit) * (minRatio / 100)) : 0;
+  // Calculate the expected base max for this bet type based on ratio
+  const calculatedBaseMax = baseMinLimit && baseMinLimit !== '' ? Math.floor(Number(baseMinLimit) * (maxRatio / 100)) : 0;
   
   // Only validate if values are entered AND minChipLimit is greater than 0
   const isMinError = min !== '' && ((minChipLimit > 0 && min < minChipLimit) || (calculatedBaseMin > 0 && min < calculatedBaseMin));
@@ -433,6 +454,66 @@ const LimitInputGroup = ({ title, minVal, maxVal, onMinChange, onMaxChange, isMa
 };
 
 const App = () => {
+    // Quick Auto-Calculation handler for Create New Bet Limit
+    const handleBaseValueChange = (type, value) => {
+      if (!newLimit.currency) {
+        showNotification('Please select a Currency first.', 'error');
+        return;
+      }
+      const numVal = parseNumber(value);
+      // The value to use for calculation (use 0 if input is empty)
+      const baseValue = numVal !== '' ? Number(numVal) : 0;
+      // Select the correct ratio map
+      const ratios = type === 'min' ? MIN_RATIOS : MAX_RATIOS;
+      if (type === 'min') setBaseMin(numVal);
+      else setBaseMax(numVal);
+      // Auto-fill logic
+      const updatedLimits = { ...newLimit.limits };
+      if (batchMode) {
+        // Update all games in batch mode
+        GAMES.forEach(game => {
+          if (!updatedLimits[game]) updatedLimits[game] = {};
+          const gameFields = GAME_LIMIT_FIELDS[game].fields;
+          gameFields.forEach(fieldName => {
+            // Default to 100 if ratio is missing, matching UI behavior
+            const ratioVal = ratios[fieldName] !== undefined ? ratios[fieldName] : 100;
+            const ratio = ratioVal / 100;
+            let calculatedValue = Math.floor(baseValue * ratio);
+            if (!updatedLimits[game][fieldName]) updatedLimits[game][fieldName] = { min: '', max: '' };
+            if (type === 'min') {
+              // If calculated min is less than currency min chip, use currency min chip
+              if (newLimit.minChip > 0 && calculatedValue < newLimit.minChip) {
+                calculatedValue = newLimit.minChip;
+              }
+              updatedLimits[game][fieldName].min = numVal === '' ? '' : calculatedValue;
+            } else {
+              updatedLimits[game][fieldName].max = numVal === '' ? '' : calculatedValue;
+            }
+          });
+        });
+      } else if (newLimit.game && GAME_LIMIT_FIELDS[newLimit.game]) {
+        // Update single game
+        if (!updatedLimits[newLimit.game]) updatedLimits[newLimit.game] = {};
+        const gameFields = GAME_LIMIT_FIELDS[newLimit.game].fields;
+        gameFields.forEach(fieldName => {
+          if (!updatedLimits[newLimit.game][fieldName]) updatedLimits[newLimit.game][fieldName] = { min: '', max: '' };
+          // Default to 100 if ratio is missing
+          const ratioVal = ratios[fieldName] !== undefined ? ratios[fieldName] : 100;
+          const ratio = ratioVal / 100;
+          let calculatedValue = Math.floor(baseValue * ratio);
+          if (type === 'min') {
+            // If calculated min is less than currency min chip, use currency min chip
+            if (newLimit.minChip > 0 && calculatedValue < newLimit.minChip) {
+              calculatedValue = newLimit.minChip;
+            }
+            updatedLimits[newLimit.game][fieldName].min = numVal === '' ? '' : calculatedValue;
+          } else {
+            updatedLimits[newLimit.game][fieldName].max = numVal === '' ? '' : calculatedValue;
+          }
+        });
+      }
+      setNewLimit(prev => ({ ...prev, limits: updatedLimits }));
+    };
   const [activeTab, setActiveTab] = useState('search'); // 'search' | 'create'
   const [data, setData] = useState(MOCK_DATA);
   const [notification, setNotification] = useState(null);
@@ -545,133 +626,70 @@ const App = () => {
   // --- Logic: Generate ID ---
   const generateId = () => {
     if (!newLimit.website) {
-        showNotification('Please select a Website first.', 'error');
-        return;
+      showNotification('Please select a Website first.', 'error');
+      return;
     }
+    if (!newLimit.currency) {
+      showNotification('Please select a Currency first.', 'error');
+      return;
+    }
+    // 產生下一個可用的 Bet Limit ID
     const nextId = getNextBetLimitId(data, newLimit.currency, newLimit.website);
     setNewLimit(prev => ({ ...prev, id: nextId }));
-  };
-
-  // --- Logic: Auto Calculation ---
-  const handleBaseValueChange = (type, value) => {
-    const numVal = parseNumber(value);
-    
-    // The value to use for calculation (use 0 if input is empty)
-    const baseValue = numVal !== '' ? Number(numVal) : 0;
-    
-    // Select the correct ratio map
-    const ratios = type === 'min' ? MIN_RATIOS : MAX_RATIOS;
-
-    if (type === 'min') setBaseMin(numVal);
-    else setBaseMax(numVal);
-
-    // Auto-fill logic
-    const updatedLimits = { ...newLimit.limits };
-    
-    if (batchMode) {
-      // Update all games in batch mode
-      GAMES.forEach(game => {
-        if (!updatedLimits[game]) updatedLimits[game] = {};
-        const gameFields = GAME_LIMIT_FIELDS[game].fields;
-        
-        gameFields.forEach(fieldName => {
-          // Default to 100 if ratio is missing, matching UI behavior
-          const ratioVal = ratios[fieldName] !== undefined ? ratios[fieldName] : 100;
-          const ratio = ratioVal / 100;
-          let calculatedValue = Math.floor(baseValue * ratio);
-          
-          if (!updatedLimits[game][fieldName]) updatedLimits[game][fieldName] = { min: '', max: '' };
-          
-          if (type === 'min') {
-            // If calculated min is less than currency min chip, use currency min chip
-            if (newLimit.minChip > 0 && calculatedValue < newLimit.minChip) {
-                calculatedValue = newLimit.minChip;
-            }
-            updatedLimits[game][fieldName].min = numVal === '' ? '' : calculatedValue;
-          } else {
-            updatedLimits[game][fieldName].max = numVal === '' ? '' : calculatedValue;
-          }
-        });
-      });
-    } else if (newLimit.game && GAME_LIMIT_FIELDS[newLimit.game]) {
-      // Update single game
-      const gameFields = GAME_LIMIT_FIELDS[newLimit.game].fields;
-      
-      gameFields.forEach(fieldName => {
-        // Default to 100 if ratio is missing
-        const ratioVal = ratios[fieldName] !== undefined ? ratios[fieldName] : 100;
-        const ratio = ratioVal / 100;
-        let calculatedValue = Math.floor(baseValue * ratio);
-        
-        if (type === 'min') {
-          // If calculated min is less than currency min chip, use currency min chip
-          if (newLimit.minChip > 0 && calculatedValue < newLimit.minChip) {
-              calculatedValue = newLimit.minChip;
-          }
-          // Use empty string if base input is empty, prevents showing 0
-          updatedLimits[fieldName].min = numVal === '' ? '' : calculatedValue;
-        } else {
-          updatedLimits[fieldName].max = numVal === '' ? '' : calculatedValue;
-        }
-      });
-    }
-    setNewLimit(prev => ({ ...prev, limits: updatedLimits }));
   };
   
   // --- Logic: Create ---
   const handleCreateSubmit = () => {
-    // Basic validation
+    // 單筆建立檢查順序與訊息與批次一致
     if (!batchMode && !newLimit.game) return showNotification('Please select a Game.', 'error');
     if (!newLimit.website) return showNotification('Please select a Website.', 'error');
     if (!newLimit.currency) return showNotification('Please select a Currency.', 'error');
-    
+
     if (batchMode) {
       // Batch creation logic
       return handleBatchCreate();
     }
-    
-    // Single game creation
-    // If user provided an ID, ensure it's unique for this website
-    if (newLimit.id) {
-      const exists = data.some(d => String(d.id).toLowerCase() === String(newLimit.id).toLowerCase() && d.website === newLimit.website);
-      if (exists) return showNotification('Bet Limit ID already exists for this Website. Please choose another ID or leave empty to auto-generate.', 'error', false);
-    }
-    
-    // Use the Min Chip value from the defaults if currency is selected, otherwise use the temporary 0 value
-    const currentMinChip = newLimit.currency ? MIN_CHIP_DEFAULTS[newLimit.currency] : 0;
 
-    // Validate Min/Max logic and required main field limits
-    let hasError = false;
-    let missingValue = false;
-    
-    // Get main field for current game
-    const gameConfig = GAME_LIMIT_FIELDS[newLimit.game];
-    const mainField = gameConfig ? gameConfig.fields.find(field => gameConfig.config[field].isMain) : null;
-    
-    Object.entries(newLimit.limits).forEach(([key, val]) => {
+    // 單筆建立檢查
+    // 1. ID 必填
+    if (!newLimit.id) {
+      return showNotification('Bet Limit ID is empty.', 'error');
+    }
+    // 2. ID 必須為 5 位數字
+    if (!/^[0-9]{5}$/.test(newLimit.id)) {
+      return showNotification('Bet Limit ID must be a 5-digit number.', 'error');
+    }
+    // 2. ID 同一遊戲裡有重複
+    const exists = data.some(d => String(d.id) === String(newLimit.id) && d.website === newLimit.website && d.game === newLimit.game);
+    if (exists) return showNotification('Bet Limit ID already used.', 'error');
+
+    // 3. 任一 bet area min/max 為空
+    let emptyField = false, minChipError = false, minMaxError = false;
+    const currentMinChip = newLimit.currency ? MIN_CHIP_DEFAULTS[newLimit.currency] : 0;
+    // 檢查所有注區（支援單一遊戲 limits 結構）
+    if (batchMode) {
+      Object.entries(newLimit.limits).forEach(([game, fields]) => {
+        Object.entries(fields).forEach(([key, val]) => {
+          const minValNum = parseNumber(val.min) === '' ? null : Number(parseNumber(val.min));
+          const maxValNum = parseNumber(val.max) === '' ? null : Number(parseNumber(val.max));
+          if (minValNum === null || maxValNum === null) emptyField = true;
+          if (minValNum !== null && minValNum < currentMinChip) minChipError = true;
+          if (minValNum !== null && maxValNum !== null && maxValNum <= minValNum) minMaxError = true;
+        });
+      });
+    } else if (newLimit.game && newLimit.limits[newLimit.game]) {
+      Object.entries(newLimit.limits[newLimit.game]).forEach(([key, val]) => {
         const minValNum = parseNumber(val.min) === '' ? null : Number(parseNumber(val.min));
         const maxValNum = parseNumber(val.max) === '' ? null : Number(parseNumber(val.max));
-
-        // Ensure main field limits are not empty
-        if (key === mainField && (minValNum === null || maxValNum === null)) {
-            missingValue = true;
-        }
-
-        // Check if Min ??Min Chip (using the dynamically fetched value)
-        if (minValNum !== null && minValNum < currentMinChip) hasError = true;
-
-        // Check if Max ??Min
-        if (minValNum !== null && maxValNum !== null && maxValNum < minValNum) hasError = true;
-    });
-
-    const mainFieldName = gameConfig ? gameConfig.config[mainField]?.displayName : 'Main field';
-    if (missingValue) return showNotification(`${mainFieldName} limits cannot be empty.`, 'error');
-    if (hasError) {
-        setCreateStatus('failed');
-        setTimeout(() => setCreateStatus(null), 3000);
-        return showNotification('Please correct the errors in the limit fields (Min must be ≧ Min Chip, Max must be > Min).', 'error');
+        if (minValNum === null || maxValNum === null) emptyField = true;
+        if (minValNum !== null && minValNum < currentMinChip) minChipError = true;
+        if (minValNum !== null && maxValNum !== null && maxValNum <= minValNum) minMaxError = true;
+      });
     }
-    
+    if (emptyField) return showNotification('All bet limit fields must be filled.', 'error');
+    if (minChipError) return showNotification('Min must be ≥ Min Chip.', 'error');
+    if (minMaxError) return showNotification('Max must be > Min.', 'error');
+
     const finalId = newLimit.id || getNextBetLimitId(data, newLimit.currency, newLimit.website);
 
     // Prepare payload for saving
@@ -814,8 +832,7 @@ const App = () => {
     const finalData = [...updatedData, ...newItems];
     setData(finalData);
 
-    const msg = `Batch operation successful: ${newItems.length} created, ${updatedItems.length} updated.`;
-    showNotification(msg, 'success');
+    showNotification('Successfully created all games.', 'success');
     setCreateStatus('success');
     setTimeout(() => setCreateStatus(null), 3000);
 
@@ -831,8 +848,8 @@ const App = () => {
 
   // --- Logic: Search ---
   const handleSearch = () => {
-    if (!searchFilters.id && !searchFilters.website && !searchFilters.game) {
-      showNotification('Game or Website is required for search unless an ID is entered.', 'error');
+    if (!searchFilters.website) {
+      showNotification('Please select a Website first.', 'error');
       return;
     }
 
@@ -933,39 +950,42 @@ const App = () => {
   const handleSearchBatchCalc = () => {
     const baseMinVal = parseNumber(searchBaseMin);
     const baseMaxVal = parseNumber(searchBaseMax);
-    
+    // 檢查錯誤條件
+    let hasError = false;
+    if (searchBaseMin !== '' && searchFilters.currency && MIN_CHIP_DEFAULTS[searchFilters.currency] && Number(searchBaseMin) < MIN_CHIP_DEFAULTS[searchFilters.currency]) {
+      hasError = true;
+    }
+    if (searchBaseMax !== '' && searchBaseMin !== '' && Number(searchBaseMax) <= Number(searchBaseMin)) {
+      hasError = true;
+    }
+    if (hasError) {
+      showNotification('Failed to apply.', 'error');
+      return;
+    }
     const newResults = searchResults.map(item => {
-        const newItem = JSON.parse(JSON.stringify(item)); // Deep copy
-        const gameFields = GAME_LIMIT_FIELDS[item.game]?.fields || [];
-        
-        gameFields.forEach(fieldName => {
-            // Min Calculation
-            if (baseMinVal !== '') {
-                const minRatio = MIN_RATIOS[fieldName] !== undefined ? MIN_RATIOS[fieldName] : 100;
-                let calcMin = Math.floor(Number(baseMinVal) * (minRatio / 100));
-                if (item.minChip > 0 && calcMin < item.minChip) {
-                    calcMin = item.minChip;
-                }
-                newItem.limits[fieldName].min = calcMin;
-            }
-            
-            // Max Calculation
-            if (baseMaxVal !== '') {
-                // Check if Base Max <= Base Min
-                if (baseMinVal !== '' && Number(baseMaxVal) <= Number(baseMinVal)) {
-                    newItem.limits[fieldName].max = 1;
-                } else {
-                    const maxRatio = MAX_RATIOS[fieldName] !== undefined ? MAX_RATIOS[fieldName] : 100;
-                    let calcMax = Math.floor(Number(baseMaxVal) * (maxRatio / 100));
-                    newItem.limits[fieldName].max = calcMax;
-                }
-            }
-        });
-        return newItem;
+      const newItem = JSON.parse(JSON.stringify(item)); // Deep copy
+      const gameFields = GAME_LIMIT_FIELDS[item.game]?.fields || [];
+      gameFields.forEach(fieldName => {
+        // Min Calculation
+        if (baseMinVal !== '') {
+          const minRatio = MIN_RATIOS[fieldName] !== undefined ? MIN_RATIOS[fieldName] : 100;
+          let calcMin = Math.floor(Number(baseMinVal) * (minRatio / 100));
+          if (item.minChip > 0 && calcMin < item.minChip) {
+            calcMin = item.minChip;
+          }
+          newItem.limits[fieldName].min = calcMin;
+        }
+        // Max Calculation
+        if (baseMaxVal !== '') {
+          const maxRatio = MAX_RATIOS[fieldName] !== undefined ? MAX_RATIOS[fieldName] : 100;
+          let calcMax = Math.floor(Number(baseMaxVal) * (maxRatio / 100));
+          newItem.limits[fieldName].max = calcMax;
+        }
+      });
+      return newItem;
     });
-    
     setSearchResults(newResults);
-    showNotification('Applied Quick Auto-Calculation to all filtered results.');
+    showNotification('Successfully applied to all games.', 'success');
   };
 
   // Logic: Save All Modified Rows
@@ -1075,7 +1095,6 @@ const App = () => {
       
       {/* Header */}
       <div className="max-w-7xl mx-auto mb-6">
-        {/* ...existing code... (main heading already present above) */}
       </div>
 
       {/* Main Content Card */}
@@ -1140,9 +1159,7 @@ const App = () => {
                       Create Limits for All Games
                     </label>
                   </div>
-                  <div className="text-xs text-blue-600">
-                    {batchMode ? 'Create limits for all games at once' : 'Create limit for single game'}
-                  </div>
+                  {/* 已移除：批次/單筆建立提示文字 */}
                 </div>
               </div>
 
@@ -1189,7 +1206,7 @@ const App = () => {
                     onChange={(e) => setNewLimit({ ...newLimit, currency: e.target.value })}
                   >
                     <option value="" disabled className="text-gray-400">Select Currency</option> 
-                    {CURRENCIES.map(c => <option key={c} value={c} className="text-gray-800">{c}</option>)}
+                    {CURRENCIES.map(c => <option key={c} value={c} className="text-gray-800">{CURRENCY_DISPLAY[c] || c}</option>)}
                   </select>
                 </div>
 
@@ -1231,7 +1248,6 @@ const App = () => {
                       placeholder="e.g. 100"
                       value={baseMin} 
                       onChange={(e) => handleBaseValueChange('min', e.target.value)}
-                      readOnly={!(newLimit.website && newLimit.currency)}
                       disabled={!(newLimit.website && newLimit.currency)}
                     />
                     {baseMin !== '' && newLimit.minChip > 0 && Number(baseMin) < newLimit.minChip && (
@@ -1248,7 +1264,6 @@ const App = () => {
                       placeholder="e.g. 10,000"
                       value={baseMax} 
                       onChange={(e) => handleBaseValueChange('max', e.target.value)}
-                      readOnly={!(newLimit.website && newLimit.currency)}
                       disabled={!(newLimit.website && newLimit.currency)}
                     />
                     {baseMax !== '' && baseMin !== '' && Number(baseMax) <= Number(baseMin) && (
@@ -1305,7 +1320,6 @@ const App = () => {
                             const isMain = fieldConfig.isMain;
                             const minRatio = MIN_RATIOS[fieldName] || 100;
                             const maxRatio = MAX_RATIOS[fieldName] || 100;
-                            
                             return (
                               <LimitInputGroup 
                                 key={`${game}-${fieldName}`}
@@ -1350,46 +1364,59 @@ const App = () => {
                     ))}
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-                    {/* Render limits based on selected game */}
-                    {newLimit.game && GAME_LIMIT_FIELDS[newLimit.game] ? (
-                      GAME_LIMIT_FIELDS[newLimit.game].fields.map(fieldName => {
-                        const fieldConfig = GAME_LIMIT_FIELDS[newLimit.game].config[fieldName];
-                        const isMain = fieldConfig.isMain;
-                        const minRatio = MIN_RATIOS[fieldName] || 100;
-                        const maxRatio = MAX_RATIOS[fieldName] || 100;
-                        
-                        return (
-                          <LimitInputGroup 
-                            key={fieldName}
-                            title={fieldConfig.displayName}
-                            isMain={isMain}
-                            minChipLimit={newLimit.minChip}
-                            disabled={!(newLimit.website && newLimit.currency)}
-                            minRatio={minRatio}
-                            maxRatio={maxRatio}
-                            minVal={newLimit.limits[fieldName]?.min || ''}
-                            maxVal={newLimit.limits[fieldName]?.max || ''}
-                            baseMinLimit={baseMin}
-                            onMinChange={(val) => {
-                              setNewLimit(prev => ({
-                                ...prev,
-                                limits: { ...prev.limits, [fieldName]: { ...prev.limits[fieldName], min: val } }
-                              }));
-                            }}
-                            onMaxChange={(val) => {
-                              setNewLimit(prev => ({
-                                ...prev,
-                                limits: { ...prev.limits, [fieldName]: { ...prev.limits[fieldName], max: val } }
-                              }));
-                            }}
-                          />
-                        );
-                      })
-                    ) : (
-                      // Default display when no game selected
-                      <div className="col-span-full">
-                        <p className="text-gray-500 text-sm text-center py-4">Please select a game to configure limits.</p>
+                  // 單一遊戲模式，立即顯示該遊戲注區
+                  <div className="space-y-8">
+                    {newLimit.game && GAME_LIMIT_FIELDS[newLimit.game] && (
+                      <div className="border rounded-lg p-4 bg-gray-50">
+                        <div className="mb-3 pb-2 border-b border-gray-200">
+                            <span className="text-sm font-semibold px-2 py-1 rounded" style={{color: 'rgb(30,64,175)', backgroundColor: 'rgb(191,219,254)'}}>{newLimit.game}</span>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                          {GAME_LIMIT_FIELDS[newLimit.game].fields.map(fieldName => {
+                            const fieldConfig = GAME_LIMIT_FIELDS[newLimit.game].config[fieldName];
+                            const isMain = fieldConfig.isMain;
+                            const minRatio = MIN_RATIOS[fieldName] || 100;
+                            const maxRatio = MAX_RATIOS[fieldName] || 100;
+                            return (
+                              <LimitInputGroup 
+                                key={`${newLimit.game}-${fieldName}`}
+                                title={fieldConfig.displayName}
+                                isMain={isMain}
+                                minChipLimit={newLimit.minChip}
+                                disabled={!(newLimit.website && newLimit.currency)}
+                                minRatio={minRatio}
+                                maxRatio={maxRatio}
+                                minVal={newLimit.limits[newLimit.game]?.[fieldName]?.min || ''}
+                                maxVal={newLimit.limits[newLimit.game]?.[fieldName]?.max || ''}
+                                baseMinLimit={baseMin}
+                                onMinChange={(val) => {
+                                  setNewLimit(prev => ({
+                                    ...prev,
+                                    limits: { 
+                                      ...prev.limits, 
+                                      [newLimit.game]: { 
+                                        ...prev.limits[newLimit.game], 
+                                        [fieldName]: { ...prev.limits[newLimit.game]?.[fieldName], min: val } 
+                                      } 
+                                    }
+                                  }));
+                                }}
+                                onMaxChange={(val) => {
+                                  setNewLimit(prev => ({
+                                    ...prev,
+                                    limits: { 
+                                      ...prev.limits, 
+                                      [newLimit.game]: { 
+                                        ...prev.limits[newLimit.game], 
+                                        [fieldName]: { ...prev.limits[newLimit.game]?.[fieldName], max: val } 
+                                      } 
+                                    }
+                                  }));
+                                }}
+                              />
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1424,11 +1451,11 @@ const App = () => {
                     onChange={(e) => setSearchFilters(prev => ({...prev, currency: e.target.value}))}
                   >
                     <option value="">All Currencies</option>
-                    {CURRENCIES.map((c, i) => <option key={c} value={c} className="text-gray-800">{i}. {c}</option>)}
+                    {CURRENCIES.map(c => <option key={c} value={c} className="text-gray-800">{CURRENCY_DISPLAY[c] || c}</option>)}
                   </select>
                   {searchFilters.currency && MIN_CHIP_DEFAULTS[searchFilters.currency] && (
                     <div className="text-[10px] text-red-600 mt-1 font-medium">
-                      Min Limit must be ≧ Currency min chip: {formatNumber(MIN_CHIP_DEFAULTS[searchFilters.currency])}
+                      {/* 已移除：Min Limit must be ≧ Currency min chip 提示 */}
                     </div>
                   )}
                 </div>
@@ -1470,50 +1497,71 @@ const App = () => {
                 <div className="mt-6">
                   
                   {/* Batch Modification Panel */}
-                  {searchResults.length > 0 && (
+                    {searchResults.length > 1 &&
+                      searchResults.every(item => item.id === searchResults[0].id && item.currency === searchResults[0].currency) && (
                     <div className="bg-blue-50 border border-blue-100 p-4 rounded-lg mb-6">
-                        <div className="flex items-center gap-2 mb-3">
-                        <RefreshCw className="w-4 h-4 text-blue-600" />
-                        <h3 className="text-sm font-bold text-blue-800">Batch Modify Filtered Results</h3>
+                      <div className="flex items-center gap-2 mb-3">
+                      <RefreshCw className="w-4 h-4 text-blue-600" />
+                      <h3 className="text-sm font-bold text-blue-800">Quick Auto-Calculation（All Games）</h3>
+                      </div>
+                      <div className="flex flex-col sm:flex-row gap-4 items-start">
+                        <div className="w-full sm:w-48">
+                          <label className="text-xs text-blue-600 font-semibold">Base Min Limit (100%)</label>
+                          <input 
+                          type="text" 
+                          className={`w-full border rounded p-2 text-right ${searchBaseMin !== '' && searchFilters.currency && MIN_CHIP_DEFAULTS[searchFilters.currency] && Number(searchBaseMin) < MIN_CHIP_DEFAULTS[searchFilters.currency] ? 'border-red-500 bg-red-50' : 'border-blue-200'}`}
+                          placeholder="e.g. 100"
+                          value={searchBaseMin} 
+                          onChange={(e) => setSearchBaseMin(parseNumber(e.target.value))}
+                          />
+                          {searchBaseMin !== '' && searchFilters.currency && MIN_CHIP_DEFAULTS[searchFilters.currency] && Number(searchBaseMin) < MIN_CHIP_DEFAULTS[searchFilters.currency] && (
+                            <div className="text-[9px] text-red-600 leading-tight text-right font-medium mt-1">
+                            Must be ≧ Currency Min Chip
+                            </div>
+                          )}
                         </div>
-                        <div className="flex flex-col sm:flex-row gap-4 items-start">
-                            <div className="w-full sm:w-48">
-                                <label className="text-xs text-blue-600 font-semibold">Base Min Limit (100%)</label>
-                                <input 
-                                type="text" 
-                                className={`w-full border rounded p-2 text-right ${searchBaseMin !== '' && searchFilters.currency && MIN_CHIP_DEFAULTS[searchFilters.currency] && Number(searchBaseMin) < MIN_CHIP_DEFAULTS[searchFilters.currency] ? 'border-red-500 bg-red-50' : 'border-blue-200'}`}
-                                placeholder="e.g. 100"
-                                value={searchBaseMin} 
-                                onChange={(e) => setSearchBaseMin(parseNumber(e.target.value))}
-                                />
-                                {searchBaseMin !== '' && searchFilters.currency && MIN_CHIP_DEFAULTS[searchFilters.currency] && Number(searchBaseMin) < MIN_CHIP_DEFAULTS[searchFilters.currency] && (
-                                  <div className="text-[9px] text-red-600 leading-tight text-right font-medium mt-1">
-                                    Must be ≧ Currency Min Chip
-                                  </div>
-                                )}
+                        <div className="w-full sm:w-48">
+                          <label className="text-xs text-blue-600 font-semibold">Base Max Limit (100%)</label>
+                          <input 
+                            type="text" 
+                            className={`w-full border rounded p-2 text-right border-blue-200 ${searchBaseMax !== '' && searchBaseMin !== '' && Number(searchBaseMax) <= Number(searchBaseMin) ? 'border-red-500 bg-red-50' : ''}`}
+                            placeholder="e.g. 10,000"
+                            value={searchBaseMax} 
+                            onChange={(e) => setSearchBaseMax(parseNumber(e.target.value))}
+                          />
+                          {searchBaseMax !== '' && searchBaseMin !== '' && Number(searchBaseMax) <= Number(searchBaseMin) && (
+                            <div className="text-[9px] text-red-600 leading-tight text-right font-medium mt-1">
+                              must &gt; Base Min Limit
                             </div>
-                            <div className="w-full sm:w-48">
-                                <label className="text-xs text-blue-600 font-semibold">Base Max Limit (100%)</label>
-                                <input 
-                                type="text" 
-                                className="w-full border border-blue-200 rounded p-2 text-right"
-                                placeholder="e.g. 10,000"
-                                value={searchBaseMax} 
-                                onChange={(e) => setSearchBaseMax(parseNumber(e.target.value))}
-                                />
-                            </div>
-                            <button 
-                                onClick={handleSearchBatchCalc}
-                                className="bg-blue-600 text-white px-4 py-2 rounded-md font-medium hover:bg-blue-700 transition-colors text-sm h-[38px] mt-6"
-                            >
-                                Apply to All Results
-                            </button>
-                            <div className="text-xs text-blue-500 pb-2 flex-1 mt-6">
-                                Applies calculated limits to all {searchResults.length} games below.
-                            </div>
+                          )}
                         </div>
+                        <div className="w-full sm:w-48">
+                          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-1">
+                            <Info className="w-3 h-3" /> Currency MIN CHIP
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <span className="text-gray-400 text-xs">Value:</span>
+                            <input
+                              type="text"
+                              readOnly
+                              className={`w-full bg-transparent border-b border-gray-300 focus:outline-none text-sm font-medium text-gray-500 cursor-not-allowed font-semibold ${!(searchFilters.website && searchFilters.currency) ? 'opacity-60' : ''}`}
+                              value={searchFilters.currency ? formatNumber(MIN_CHIP_DEFAULTS[searchFilters.currency]) : ''}
+                            />
+                          </div>
+                          <p className="text-[10px] text-gray-400 mt-1">Min Limit must be ≧ this value.</p>
+                        </div>
+                        <button 
+                          onClick={handleSearchBatchCalc}
+                          className="bg-blue-600 text-white px-4 py-2 rounded-md font-medium hover:bg-blue-700 transition-colors text-sm h-[38px] mt-6"
+                        >
+                          Apply to All Results
+                        </button>
+                        <div className="text-xs text-blue-500 pb-2 flex-1 mt-6">
+                          {/* 已移除：Applies calculated limits to all ... games below. */}
+                        </div>
+                      </div>
                     </div>
-                  )}
+                    )}
 
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="text-sm font-bold text-gray-700">Search Results ({searchResults.length})</h3>
@@ -1657,6 +1705,3 @@ setTimeout(() => {
     lucide.createIcons();
   }
 }, 100);
-
-  </script>
-</body>
