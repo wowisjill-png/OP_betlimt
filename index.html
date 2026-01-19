@@ -10,7 +10,15 @@
   <script src="https://unpkg.com/lucide@latest"></script>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
+<body style="padding-left:20px;">
+  <!-- Breadcrumb -->
+  <nav style="width:100%;background:#f6f8fa;padding:18px 0 10px 0;margin-bottom:8px;">
+    <span style="color:#5a6b8a;font-size:14px;font-weight:400;letter-spacing:0.5px;">Game</span>
+    <span style="color:#5a6b8a;font-size:14px;font-weight:400;margin:0 12px;">&gt;</span>
+    <span style="color:#5a6b8a;font-size:14px;font-weight:400;">Game Setting</span>
+  </nav>
+
+  <h1 style="color:#000;font-size:24px;font-weight:500;">Bet Limits</h1>
   <div id="root"></div>
   
   <script type="text/babel">
@@ -369,7 +377,7 @@ const LimitInputGroup = ({ title, minVal, maxVal, onMinChange, onMaxChange, isMa
         {/* Min Limit Input */}
         <div>
           <div className="flex items-center gap-1">
-            <span className="text-[10px] text-gray-500 w-8 text-right font-semibold">Min<br/>{minRatio}%</span>
+            <span className="w-8 text-right font-semibold" style={{color: 'rgb(156,163,175)', fontSize: '8px'}}>Min<br/>{minRatio}%</span>
             <input
               type="text"
               value={formatNumber(minVal)}
@@ -386,7 +394,7 @@ const LimitInputGroup = ({ title, minVal, maxVal, onMinChange, onMaxChange, isMa
           </div>
           <div className="h-3.5 mt-0.5">
             {isMinError && (
-              <div className="text-[9px] text-red-600 leading-tight text-right pl-8 font-medium">
+              <div className="flex items-center gap-1 text-red-500" style={{textAlign: 'right', paddingLeft: '2rem', fontWeight: 500, fontSize: '8px'}}>
                 {min < minChipLimit ? 'Must be ≧ Min Chip' : 'Must be ≧ Base Min'}
               </div>
             )}
@@ -396,7 +404,7 @@ const LimitInputGroup = ({ title, minVal, maxVal, onMinChange, onMaxChange, isMa
         {/* Max Limit Input */}
         <div>
           <div className="flex items-center gap-1">
-            <span className="text-[10px] text-gray-500 w-8 text-right font-semibold">Max<br/>{maxRatio}%</span>
+            <span className="w-8 text-right font-semibold" style={{color: 'rgb(156,163,175)', fontSize: '8px'}}>Max<br/>{maxRatio}%</span>
             <input
               type="text"
               value={formatNumber(maxVal)}
@@ -413,7 +421,7 @@ const LimitInputGroup = ({ title, minVal, maxVal, onMinChange, onMaxChange, isMa
           </div>
           <div className="h-3.5 mt-0.5">
             {isMaxError && (
-              <div className="text-[9px] text-red-600 leading-tight text-right pl-8 font-medium">
+              <div className="flex items-center gap-1 text-red-500" style={{textAlign: 'right', paddingLeft: '2rem', fontWeight: 500, fontSize: '8px'}}>
                 {min !== '' && max < min ? 'Must be > Min Limit' : 'Must be ≧ Base Min'}
               </div>
             )}
@@ -699,38 +707,73 @@ const App = () => {
   };
   const handleBatchCreate = () => {
     const currentMinChip = newLimit.currency ? MIN_CHIP_DEFAULTS[newLimit.currency] : 0;
-    
+
     // Check if limits are configured (check if any game has limits set)
     const hasLimits = Object.keys(newLimit.limits).length > 0;
-    
     if (!hasLimits) {
       setCreateStatus('failed');
       setTimeout(() => setCreateStatus(null), 3000);
       return showNotification('Please configure bet limits before batch creation.', 'error');
     }
 
+    // --- Validation: All games must have valid limits ---
+    // Error priority: 1>2>3>4>5>6
+    let errorMsg = '';
+    const idToCheck = newLimit.id;
+    let idUsed = false;
+    let emptyField = false, minChipError = false, minMaxError = false;
+    if (idToCheck && data.some(d => String(d.id) === String(idToCheck) && d.website === newLimit.website)) idUsed = true;
+    GAMES.forEach(game => {
+      const gameLimits = newLimit.limits[game];
+      if (!gameLimits) return;
+      Object.entries(gameLimits).forEach(([key, val]) => {
+        const minVal = val.min;
+        const maxVal = val.max;
+        const minValNum = parseNumber(minVal) === '' ? null : Number(parseNumber(minVal));
+        const maxValNum = parseNumber(maxVal) === '' ? null : Number(parseNumber(maxVal));
+        if (minVal === '' || maxVal === '' || minVal === undefined || maxVal === undefined) emptyField = true;
+        if (minValNum !== null && minValNum < currentMinChip) minChipError = true;
+        if (minValNum !== null && maxValNum !== null && maxValNum <= minValNum) minMaxError = true;
+      });
+    });
+    // 1. Bet Limit ID is required
+    if (!idToCheck) errorMsg = 'Bet Limit ID is required.';
+    // 2. Bet Limit ID must be 5 digits
+    else if (!/^[0-9]{5}$/.test(idToCheck)) errorMsg = 'Bet Limit ID must be a 5-digit number.';
+    // 3. Bet Limit ID already used
+    else if (idUsed) errorMsg = 'Bet Limit ID already used.';
+    // 4. Any bet area min/max is empty
+    else if (emptyField) errorMsg = 'All bet limit fields must be filled.';
+    // 5. Min < Min Chip
+    else if (minChipError) errorMsg = 'Min must be ≥ Min Chip.';
+    // 6. Max ≤ Min
+    else if (minMaxError) errorMsg = 'Max must be > Min.';
+    if (errorMsg) {
+      setCreateStatus(null); // do not show 'Failed'
+      setTimeout(() => setCreateStatus(null), 3000);
+      return showNotification(errorMsg, 'error');
+    }
+
     const newItems = [];
     const updatedItems = [];
     const updatedData = [...data]; // Clone data for updates
-    
+
     // Generate one ID for the whole batch if needed
     let batchId = null;
 
     // Process all games
     GAMES.forEach(game => {
       // Check if combination already exists
-      const existingIndex = updatedData.findIndex(d => 
-        d.game === game && 
-        d.website === newLimit.website && 
+      const existingIndex = updatedData.findIndex(d =>
+        d.game === game &&
+        d.website === newLimit.website &&
         d.currency === newLimit.currency
       );
-      
+
       // Get limits for this specific game from the batch configuration
-      let gameLimits = newLimit.limits[game];
-      if (!gameLimits) {
-          gameLimits = getInitialLimitsForGame(game);
-      }
-      
+      const gameLimits = newLimit.limits[game];
+      if (!gameLimits) return;
+
       // Prepare limits object with number conversion
       const processedLimits = JSON.parse(JSON.stringify(gameLimits));
       Object.keys(processedLimits).forEach(key => {
@@ -750,10 +793,10 @@ const App = () => {
       } else {
         // CREATE new
         if (!batchId) {
-             // Calculate ID only once based on current data
-             batchId = getNextBetLimitId(updatedData, newLimit.currency, newLimit.website);
+          // Calculate ID only once based on current data
+          batchId = getNextBetLimitId(updatedData, newLimit.currency, newLimit.website);
         }
-        
+
         const payload = {
           id: batchId,
           game,
@@ -770,12 +813,12 @@ const App = () => {
     // Update state with both updated existing items and new items
     const finalData = [...updatedData, ...newItems];
     setData(finalData);
-    
+
     const msg = `Batch operation successful: ${newItems.length} created, ${updatedItems.length} updated.`;
     showNotification(msg, 'success');
     setCreateStatus('success');
     setTimeout(() => setCreateStatus(null), 3000);
-    
+
     // Reset form
     setNewLimit({
       id: '', game: '', website: '', currency: '', minChip: 0, limits: getInitialLimitsForGame(''),
@@ -1032,11 +1075,7 @@ const App = () => {
       
       {/* Header */}
       <div className="max-w-7xl mx-auto mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-           <Calculator className="w-8 h-8 text-blue-600" />
-           Bet Limit Configuration
-        </h1>
-        <p className="text-gray-500 text-sm mt-1">Configure bet limits based on Game, Website and Currency.</p>
+        {/* ...existing code... (main heading already present above) */}
       </div>
 
       {/* Main Content Card */}
@@ -1046,13 +1085,13 @@ const App = () => {
         <div className="flex border-b border-gray-200">
           <button
             onClick={() => setActiveTab('search')}
-            className={`flex-1 py-4 px-6 text-sm font-medium flex items-center justify-center gap-2 transition-colors ${activeTab === 'search' ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+            className={`flex-1 py-4 px-6 text-sm font-semibold flex items-center justify-center gap-2 transition-colors rounded-t-lg ${activeTab === 'search' ? 'bg-blue-100 text-blue-800 border-b-2 border-blue-600' : 'text-gray-500 hover:text-blue-700 bg-white'}`}
           >
             <Search className="w-4 h-4" /> Search & Modify
           </button>
           <button
             onClick={() => setActiveTab('create')}
-            className={`flex-1 py-4 px-6 text-sm font-medium flex items-center justify-center gap-2 transition-colors ${activeTab === 'create' ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+            className={`flex-1 py-4 px-6 text-sm font-semibold flex items-center justify-center gap-2 transition-colors rounded-t-lg ${activeTab === 'create' ? 'bg-blue-100 text-blue-800 border-b-2 border-blue-600' : 'text-gray-500 hover:text-blue-700 bg-white'}`}
           >
             <Plus className="w-4 h-4" /> Create New Bet Limit
           </button>
@@ -1098,7 +1137,7 @@ const App = () => {
                       className="w-4 h-4 text-blue-600 border-blue-300 rounded focus:ring-blue-500"
                     />
                     <label htmlFor="batchMode" className="text-sm font-medium text-blue-900">
-                      Batch Creation Mode
+                      Create Limits for All Games
                     </label>
                   </div>
                   <div className="text-xs text-blue-600">
@@ -1127,7 +1166,7 @@ const App = () => {
                     <option value="" disabled className="text-gray-400">{batchMode ? 'All Games' : 'Select Game'}</option>
                     {!batchMode && GAMES.map(g => <option key={g} value={g} className="text-gray-800">{g}</option>)}
                   </select>
-                  {batchMode && <p className="text-xs text-gray-500 mt-1">Batch mode: limits will be created for all games</p>}
+                  {/* ...removed batch mode helper text... */}
                 </div>
 
                 <div className="col-span-1">
@@ -1155,41 +1194,26 @@ const App = () => {
                 </div>
 
                 <div className="col-span-1 flex flex-col items-start gap-1">
-                    <label className="mb-1 text-xs font-semibold text-gray-600 uppercase tracking-wider">Bet Limit ID (Optional)</label>
+                    <label className="mb-1 text-xs font-semibold text-gray-600 uppercase tracking-wider">Bet Limit ID</label>
                     <div className="flex w-full gap-2">
                          <input
                             type="text"
                             value={newLimit.id}
                             onChange={(e) => setNewLimit({ ...newLimit, id: e.target.value })}
-                            placeholder="Leave empty for auto-generate or press Generate"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm bg-white focus:ring-blue-500 focus:border-blue-500 focus:outline-none focus:ring-2"
+                            placeholder=""
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg text-base bg-white focus:ring-blue-500 focus:border-blue-500 focus:outline-none focus:ring-2" style={{height: '36.5px'}} 
                         />
                          <button 
                             onClick={generateId}
-                            className="px-3 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition-colors"
-                            title="Generate Next ID"
+                            className="px-4 py-2 font-semibold rounded-lg transition-colors border border-blue-200 flex items-center justify-center" style={{height: '36.5px', backgroundColor: 'rgb(30, 141, 184)', color: 'white', lineHeight: 'normal'}}
+                            title="Auto"
                         >
-                            <Shuffle className="w-4 h-4" /> Generate
+                            Auto
                          </button>
                     </div>
                 </div>
 
-                <div className="bg-gray-100 p-3 rounded-md border border-gray-200 self-stretch">
-                   <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-1">
-                     <Lock className="w-3 h-3" /> Currency MIN CHIP
-                   </label>
-                   <div className="flex items-center gap-2">
-                     <span className="text-gray-400 text-xs">Value:</span>
-                     <input 
-                       type="text"
-                       readOnly
-                       className={`w-full bg-transparent border-b border-gray-300 focus:outline-none text-sm font-medium text-gray-500 cursor-not-allowed font-semibold ${!(newLimit.website && newLimit.currency) ? 'opacity-60' : ''}`}
-                       // Display 0 when no currency is selected
-                       value={newLimit.currency ? formatNumber(newLimit.minChip) : ''}
-                     />
-                   </div>
-                   <p className="text-[10px] text-gray-400 mt-1">Min Limit must be ≧ this value.</p>
-                </div>
+
               </div>
 
               {/* Quick Calc Section */}
@@ -1220,32 +1244,50 @@ const App = () => {
                     <label className="text-xs text-blue-600 font-semibold">Base Max Limit (100% Rate)</label>
                     <input 
                       type="text" 
-                      className="w-full border border-blue-200 rounded p-2 text-right"
+                      className={`w-full border rounded p-2 text-right border-blue-200 ${baseMax !== '' && baseMin !== '' && Number(baseMax) <= Number(baseMin) ? 'border-red-500 bg-red-50' : ''}`}
                       placeholder="e.g. 10,000"
                       value={baseMax} 
                       onChange={(e) => handleBaseValueChange('max', e.target.value)}
                       readOnly={!(newLimit.website && newLimit.currency)}
                       disabled={!(newLimit.website && newLimit.currency)}
                     />
+                    {baseMax !== '' && baseMin !== '' && Number(baseMax) <= Number(baseMin) && (
+                      <div className="text-[9px] text-red-600 leading-tight text-right font-medium mt-1">
+                        must &gt; Base Min Limit
+                      </div>
+                    )}
                   </div>
-                  <div className="text-xs text-blue-500 mt-5 sm:mt-0 flex-1">
-                    Entering values here will automatically populate the fields below based on Min/Max Ratios.
+                  <div className="flex-1 flex justify-end w-full">
+                    <div className="bg-gray-100 p-3 rounded-md border border-gray-200 min-w-[220px] max-w-xs">
+                      <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-1">
+                        <Info className="w-3 h-3" /> Currency MIN CHIP
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-400 text-xs">Value:</span>
+                        <input 
+                          type="text"
+                          readOnly
+                          className={`w-full bg-transparent border-b border-gray-300 focus:outline-none text-sm font-medium text-gray-500 cursor-not-allowed font-semibold ${!(newLimit.website && newLimit.currency) ? 'opacity-60' : ''}`}
+                          value={newLimit.currency ? formatNumber(newLimit.minChip) : ''}
+                        />
+                      </div>
+                      <p className="text-[10px] text-gray-400 mt-1">Min Limit must be ≧ this value.</p>
+                    </div>
                   </div>
                 </div>
               </div>
 
               {/* Limits Matrix */}
               <div>
-                <div className="flex justify-between items-center mb-3">
-                  <h3 className="text-sm font-bold text-gray-700 border-l-4 border-amber-500 pl-2">Limit Configuration</h3>
+                <div className="flex justify-end items-center mb-3">
                   <div className="flex items-center gap-2">
-                    {createStatus === 'success' && <span className="text-sm text-green-700 font-bold bg-green-100 px-2 py-1 rounded">Saved!</span>}
+                    {createStatus === 'success' && <span className="text-sm text-green-700 font-bold bg-green-100 px-2 py-1 rounded">Save Successful</span>}
                     {createStatus === 'failed' && <span className="text-sm text-red-700 font-bold bg-red-100 px-2 py-1 rounded">Failed</span>}
                     <button 
                         onClick={handleCreateSubmit}
-                        className="bg-blue-600 text-white px-6 py-2 rounded-md font-medium hover:bg-blue-700 focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors flex items-center gap-2"
+                        className="px-6 py-2 font-semibold rounded-lg transition-colors flex items-center gap-2 border border-blue-200 disabled:opacity-60 disabled:cursor-not-allowed" style={{backgroundColor: 'rgb(30, 141, 184)', color: 'white', height: '36.5px'}}
                     >
-                        <Save className="w-4 h-4" /> {batchMode ? 'Create Batch Limits' : 'Save New Limit'}
+                        <Save className="w-4 h-4" /> {batchMode ? 'Save All' : 'Save New Limit'}
                     </button>
                   </div>
                 </div>
@@ -1255,7 +1297,7 @@ const App = () => {
                     {GAMES.map(game => (
                       <div key={game} className="border rounded-lg p-4 bg-gray-50">
                         <div className="mb-3 pb-2 border-b border-gray-200">
-                            <span className="text-sm font-semibold text-purple-700 bg-purple-50 px-2 py-1 rounded">{game}</span>
+                            <span className="text-sm font-semibold px-2 py-1 rounded" style={{color: 'rgb(30,64,175)', backgroundColor: 'rgb(191,219,254)'}}>{game}</span>
                         </div>
                         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-3">
                           {GAME_LIMIT_FIELDS[game].fields.map(fieldName => {
@@ -1510,7 +1552,7 @@ const App = () => {
                                   <span className="text-xs font-bold text-gray-500">Status:</span>
                                   <button
                                     onClick={() => handleToggleStatus(idx)}
-                                    className={`px-3 py-1 text-xs font-medium rounded transition-colors ${item.status === 'Enable' ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-red-100 text-red-700 hover:bg-red-200'}`}
+                                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors border ${item.status === 'Enable' ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100'}`}
                                   >
                                     {item.status}
                                   </button>
@@ -1520,7 +1562,7 @@ const App = () => {
                                   {saveStatus[item.id] === 'failed' && <span className="text-sm text-red-700 font-bold bg-red-100 px-2 py-1 rounded">Failed</span>}
                                   <button 
                                     onClick={() => handleSaveRow(idx)}
-                                    className="bg-blue-600 text-white px-3 py-1 rounded text-xs font-medium hover:bg-blue-700 flex items-center gap-1"
+                                    className="px-3 py-1 bg-blue-100 text-blue-700 font-semibold rounded-lg hover:bg-blue-200 transition-colors flex items-center gap-1 border border-blue-200 text-xs disabled:bg-blue-50 disabled:text-blue-300 disabled:cursor-not-allowed"
                                   >
                                     <Save className="w-3 h-3" /> Save
                                   </button>
@@ -1553,10 +1595,10 @@ const App = () => {
                                     />
                                 </div>
                                 <button 
-                                    onClick={() => handleSingleBatchCalc(idx)}
-                                    className="w-full bg-blue-600 text-white py-1.5 rounded text-xs font-bold hover:bg-blue-700 flex justify-center items-center gap-1"
+                                  onClick={() => handleSingleBatchCalc(idx)}
+                                  className="w-full py-1.5 bg-blue-100 text-blue-700 font-semibold rounded-lg hover:bg-blue-200 transition-colors flex justify-center items-center gap-1 border border-blue-200 text-xs disabled:bg-blue-50 disabled:text-blue-300 disabled:cursor-not-allowed"
                                 >
-                                    <Calculator className="w-3 h-3" /> Quick Auto-Calc
+                                  <Calculator className="w-3 h-3" /> Quick Auto-Calc
                                 </button>
                             </div>
 
